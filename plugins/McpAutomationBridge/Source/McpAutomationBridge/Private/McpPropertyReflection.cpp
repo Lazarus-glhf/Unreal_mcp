@@ -19,6 +19,59 @@
 namespace McpPropertyReflection
 {
 
+namespace
+{
+bool MatchesSimpleWildcard(const FString& Value, const FString& Pattern)
+{
+    if (Pattern.IsEmpty())
+    {
+        return true;
+    }
+
+    if (Pattern == TEXT("*"))
+    {
+        return true;
+    }
+
+    if (Pattern.StartsWith(TEXT("*")) && Pattern.EndsWith(TEXT("*")) && Pattern.Len() >= 2)
+    {
+        return Value.Contains(Pattern.Mid(1, Pattern.Len() - 2), ESearchCase::IgnoreCase);
+    }
+
+    if (Pattern.StartsWith(TEXT("*")))
+    {
+        return Value.EndsWith(Pattern.Mid(1), ESearchCase::IgnoreCase);
+    }
+
+    if (Pattern.EndsWith(TEXT("*")))
+    {
+        return Value.StartsWith(Pattern.LeftChop(1), ESearchCase::IgnoreCase);
+    }
+
+    return Value.Equals(Pattern, ESearchCase::IgnoreCase);
+}
+
+bool ShouldSkipValueForDefaults(const TSharedPtr<FJsonValue>& Value)
+{
+    if (!Value.IsValid() || Value->IsNull())
+    {
+        return true;
+    }
+
+    switch (Value->Type)
+    {
+    case EJson::String:
+        return Value->AsString().IsEmpty();
+    case EJson::Array:
+        return Value->AsArray().Num() == 0;
+    case EJson::Object:
+        return Value->AsObject().IsValid() && Value->AsObject()->Values.Num() == 0;
+    default:
+        return false;
+    }
+}
+}
+
 TSharedPtr<FJsonValue> ExportPropertyToJsonValue(void* TargetContainer, FProperty* Property)
 {
     if (!TargetContainer || !Property)
@@ -316,6 +369,91 @@ TSharedPtr<FJsonObject> ExportObjectToJson(UObject* Object, bool bIncludeTransie
         if (Value.IsValid())
         {
             Result->SetField(Property->GetName(), Value);
+        }
+    }
+
+    return Result;
+}
+
+TSharedPtr<FJsonObject> ExportObjectToJsonDetailed(
+    UObject* Object,
+    const FExportOptions& Options,
+    TArray<TSharedPtr<FJsonValue>>* OutPropertyMeta)
+{
+    if (!Object)
+    {
+        return nullptr;
+    }
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    UClass* Class = Object->GetClass();
+
+    for (TFieldIterator<FProperty> It(Class); It; ++It)
+    {
+        FProperty* Property = *It;
+        if (!Property)
+        {
+            continue;
+        }
+
+        if (!Options.bIncludeTransient && Property->HasAnyPropertyFlags(CPF_Transient))
+        {
+            continue;
+        }
+
+        if (Property->HasAnyPropertyFlags(CPF_Deprecated))
+        {
+            continue;
+        }
+
+        const FString PropertyName = Property->GetName();
+        if (!MatchesSimpleWildcard(PropertyName, Options.PropertyFilter))
+        {
+            continue;
+        }
+
+        const FString Category = Property->GetMetaData(TEXT("Category"));
+        if (!Options.CategoryFilter.IsEmpty() && !MatchesSimpleWildcard(Category, Options.CategoryFilter))
+        {
+            continue;
+        }
+
+        TSharedPtr<FJsonValue> Value = McpPropertyReflection::ExportPropertyToJsonValue(Object, Property);
+        if (!Options.bIncludeDefaults && ShouldSkipValueForDefaults(Value))
+        {
+            continue;
+        }
+
+        if (Value.IsValid())
+        {
+            Result->SetField(PropertyName, Value);
+        }
+
+        if (OutPropertyMeta)
+        {
+            TSharedPtr<FJsonObject> Meta = MakeShared<FJsonObject>();
+            Meta->SetStringField(TEXT("name"), PropertyName);
+            Meta->SetStringField(TEXT("type"), GetPropertyTypeName(Property));
+            if (!Category.IsEmpty())
+            {
+                Meta->SetStringField(TEXT("category"), Category);
+            }
+            if (Property->HasAnyPropertyFlags(CPF_Edit))
+            {
+                Meta->SetBoolField(TEXT("editable"), true);
+            }
+            if (Property->HasAnyPropertyFlags(CPF_BlueprintVisible))
+            {
+                Meta->SetBoolField(TEXT("blueprintVisible"), true);
+            }
+
+            const FString Tooltip = Property->GetMetaData(TEXT("ToolTip"));
+            if (!Tooltip.IsEmpty())
+            {
+                Meta->SetStringField(TEXT("tooltip"), Tooltip);
+            }
+
+            OutPropertyMeta->Add(MakeShared<FJsonValueObject>(Meta));
         }
     }
 

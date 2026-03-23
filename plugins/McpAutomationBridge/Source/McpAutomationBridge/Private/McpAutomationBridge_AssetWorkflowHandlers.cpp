@@ -187,6 +187,8 @@ bool UMcpAutomationBridgeSubsystem::HandleAssetAction(
     return HandleDeleteAssets(RequestId, Payload, RequestingSocket);
   if (Lower == TEXT("create_folder"))
     return HandleCreateFolder(RequestId, Payload, RequestingSocket);
+  if (Lower == TEXT("save_asset"))
+    return HandleSaveAsset(RequestId, Action, Payload, RequestingSocket);
   if (Lower == TEXT("create_material"))
     return HandleCreateMaterial(RequestId, Payload, RequestingSocket);
   if (Lower == TEXT("create_material_instance"))
@@ -540,6 +542,86 @@ bool UMcpAutomationBridgeSubsystem::HandleSourceControlCheckout(
   SendAutomationResponse(RequestingSocket, RequestId, false,
                          TEXT("source_control_checkout requires editor build"),
                          nullptr, TEXT("NOT_IMPLEMENTED"));
+  return true;
+#endif
+}
+
+bool UMcpAutomationBridgeSubsystem::HandleSaveAsset(
+    const FString &RequestId, const FString &Action,
+    const TSharedPtr<FJsonObject> &Payload,
+    TSharedPtr<FMcpBridgeWebSocket> RequestingSocket) {
+  const FString Lower = Action.ToLower();
+  if (!Lower.Equals(TEXT("save_asset"), ESearchCase::IgnoreCase) &&
+      !(Lower.Equals(TEXT("manage_asset"), ESearchCase::IgnoreCase) && Payload.IsValid())) {
+    return false;
+  }
+
+#if WITH_EDITOR
+  if (!Payload.IsValid()) {
+    SendAutomationError(RequestingSocket, RequestId,
+                        TEXT("save_asset payload missing"),
+                        TEXT("INVALID_PAYLOAD"));
+    return true;
+  }
+
+  FString AssetPath;
+  Payload->TryGetStringField(TEXT("assetPath"), AssetPath);
+  if (AssetPath.IsEmpty()) {
+    SendAutomationError(RequestingSocket, RequestId,
+                        TEXT("assetPath is required"),
+                        TEXT("INVALID_ARGUMENT"));
+    return true;
+  }
+
+  const FString SanitizedAssetPath = SanitizeProjectRelativePath(AssetPath);
+  if (SanitizedAssetPath.IsEmpty()) {
+    SendAutomationError(RequestingSocket, RequestId,
+                        FString::Printf(TEXT("Invalid assetPath: %s"), *AssetPath),
+                        TEXT("INVALID_PATH"));
+    return true;
+  }
+
+  UObject* Asset = UEditorAssetLibrary::LoadAsset(SanitizedAssetPath);
+  if (!Asset) {
+    SendAutomationError(RequestingSocket, RequestId,
+                        FString::Printf(TEXT("Failed to load asset: %s"), *SanitizedAssetPath),
+                        TEXT("ASSET_NOT_FOUND"));
+    return true;
+  }
+
+  bool bCheckoutIfNeeded = false;
+  Payload->TryGetBoolField(TEXT("checkoutIfNeeded"), bCheckoutIfNeeded);
+  bool bCheckedOut = false;
+
+  if (bCheckoutIfNeeded && ISourceControlModule::Get().IsEnabled()) {
+    FString PackageName = FPackageName::ObjectPathToPackageName(SanitizedAssetPath);
+    if (!PackageName.IsEmpty()) {
+      TArray<FString> PackageNames;
+      PackageNames.Add(PackageName);
+      bCheckedOut = SourceControlHelpers::CheckOutFiles(PackageNames, true);
+    }
+  }
+
+  const bool bSaved = SaveLoadedAssetThrottled(Asset, -1.0, true);
+
+  TSharedPtr<FJsonObject> Result = McpHandlerUtils::CreateResultObject();
+  Result->SetBoolField(TEXT("success"), bSaved);
+  Result->SetStringField(TEXT("assetPath"), SanitizedAssetPath);
+  Result->SetBoolField(TEXT("saved"), bSaved);
+  Result->SetBoolField(TEXT("checkedOut"), bCheckedOut);
+  Result->SetStringField(TEXT("saveMode"), TEXT("mark_dirty"));
+  McpHandlerUtils::AddVerification(Result, Asset);
+
+  SendAutomationResponse(RequestingSocket, RequestId, bSaved,
+                         bSaved ? TEXT("Asset marked dirty for save.")
+                                : TEXT("Failed to mark asset dirty for save."),
+                         Result,
+                         bSaved ? FString() : TEXT("SAVE_FAILED"));
+  return true;
+#else
+  SendAutomationResponse(RequestingSocket, RequestId, false,
+                         TEXT("save_asset requires editor build"), nullptr,
+                         TEXT("NOT_IMPLEMENTED"));
   return true;
 #endif
 }

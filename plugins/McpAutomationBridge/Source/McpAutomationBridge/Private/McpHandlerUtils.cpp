@@ -8,6 +8,7 @@
 #include "McpAutomationBridgeHelpers.h"
 #include "McpSafeOperations.h"
 #include "EngineUtils.h"
+#include "Misc/PackageName.h"
 
 // Define log category declared in McpSafeOperations.h
 DEFINE_LOG_CATEGORY(LogMcpSafeOperations);
@@ -437,6 +438,32 @@ UObject* ResolveObjectFromPath(const FString& ObjectPath, FString* OutResolvedPa
     // Try to load as asset (supports both /Game/ and /Engine/ paths)
     if (Path.StartsWith(TEXT("/Game/")) || Path.StartsWith(TEXT("/Engine/")) || Path.StartsWith(TEXT("/Script/")))
     {
+        if (UObject* DirectObject = StaticLoadObject(UObject::StaticClass(), nullptr, *Path))
+        {
+            if (OutResolvedPath)
+            {
+                *OutResolvedPath = DirectObject->GetPathName();
+            }
+            return DirectObject;
+        }
+
+        if (!Path.Contains(TEXT(".")))
+        {
+            const FString AssetName = FPackageName::GetLongPackageAssetName(Path);
+            if (!AssetName.IsEmpty())
+            {
+                const FString ObjectPath = Path + TEXT(".") + AssetName;
+                if (UObject* AssetObject = StaticLoadObject(UObject::StaticClass(), nullptr, *ObjectPath))
+                {
+                    if (OutResolvedPath)
+                    {
+                        *OutResolvedPath = AssetObject->GetPathName();
+                    }
+                    return AssetObject;
+                }
+            }
+        }
+
         FString PackagePath = Path;
         if (PackagePath.Contains(TEXT(".")))
         {

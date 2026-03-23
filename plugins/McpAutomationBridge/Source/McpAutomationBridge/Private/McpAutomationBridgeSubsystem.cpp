@@ -838,6 +838,13 @@ void UMcpAutomationBridgeSubsystem::InitializeHandlers() {
                     return HandleSearchAssets(R, A, P, S);
                   });
 
+  RegisterHandler(TEXT("inspect_asset"),
+                  [this](const FString &R, const FString &A,
+                         const TSharedPtr<FJsonObject> &P,
+                         TSharedPtr<FMcpBridgeWebSocket> S) {
+                    return HandleInspectAsset(R, A, P, S);
+                  });
+
   RegisterHandler(TEXT("find_by_tag"),
                   [this](const FString &R, const FString &A,
                          const TSharedPtr<FJsonObject> &P,
@@ -859,6 +866,13 @@ void UMcpAutomationBridgeSubsystem::InitializeHandlers() {
                          const TSharedPtr<FJsonObject> &P,
                          TSharedPtr<FMcpBridgeWebSocket> S) {
                     return HandleGenerateThumbnail(R, A, P, S);
+                  });
+
+  RegisterHandler(TEXT("save_asset"),
+                  [this](const FString &R, const FString &A,
+                         const TSharedPtr<FJsonObject> &P,
+                         TSharedPtr<FMcpBridgeWebSocket> S) {
+                    return HandleSaveAsset(R, A, P, S);
                   });
 
   RegisterHandler(TEXT("get_source_control_state"),

@@ -451,6 +451,14 @@ private:
                      const TSharedPtr<FJsonObject> &Payload,
                      TSharedPtr<FMcpBridgeWebSocket> RequestingSocket);
   bool
+  HandleInspectAsset(const FString &RequestId, const FString &Action,
+                     const TSharedPtr<FJsonObject> &Payload,
+                     TSharedPtr<FMcpBridgeWebSocket> RequestingSocket);
+  bool
+  HandleSaveAsset(const FString &RequestId, const FString &Action,
+                  const TSharedPtr<FJsonObject> &Payload,
+                  TSharedPtr<FMcpBridgeWebSocket> RequestingSocket);
+  bool
   HandleAddMaterialNode(const FString &RequestId, const FString &Action,
                         const TSharedPtr<FJsonObject> &Payload,
                         TSharedPtr<FMcpBridgeWebSocket> RequestingSocket);

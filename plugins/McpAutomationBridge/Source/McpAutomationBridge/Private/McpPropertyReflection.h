@@ -33,6 +33,15 @@
 // =============================================================================
 namespace McpPropertyReflection
 {
+    struct FExportOptions
+    {
+        bool bIncludeTransient = false;
+        bool bIncludeDefaults = false;
+        int32 MaxDepth = 3;
+        FString PropertyFilter;
+        FString CategoryFilter;
+    };
+
     // =========================================================================
     // JSON Value Export (Property -> JSON)
     // =========================================================================
@@ -70,6 +79,14 @@ namespace McpPropertyReflection
     MCPAUTOMATIONBRIDGE_API TSharedPtr<FJsonObject> ExportObjectToJson(
         UObject* Object, 
         bool bIncludeTransient = false);
+
+    /**
+     * Export object properties with filtering and metadata support.
+     */
+    MCPAUTOMATIONBRIDGE_API TSharedPtr<FJsonObject> ExportObjectToJsonDetailed(
+        UObject* Object,
+        const FExportOptions& Options,
+        TArray<TSharedPtr<FJsonValue>>* OutPropertyMeta = nullptr);
 
     /**
      * Export specific properties of a UObject to a JSON object.

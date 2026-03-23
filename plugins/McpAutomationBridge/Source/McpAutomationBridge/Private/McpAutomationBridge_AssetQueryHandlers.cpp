@@ -12,6 +12,7 @@
 //   - find_by_tag: Find assets by metadata tag value
 //   - search_assets: Query assets by class, path, and other filters
 //   - get_source_control_state: Get source control state for asset (Editor Only)
+//   - inspect_asset: Inspect a loaded asset and export structured properties
 // 
 // Action: search_assets (wrapper)
 //   - Delegates to asset_query with subAction="search_assets"
@@ -41,6 +42,7 @@
 // Core Includes
 // -----------------------------------------------------------------------------
 #include "McpAutomationBridgeSubsystem.h"
+#include "McpAssetInspectionUtils.h"
 #include "McpAutomationBridgeHelpers.h"
 #include "McpAutomationBridgeGlobals.h"
 #include "McpHandlerUtils.h"
@@ -85,6 +87,11 @@ bool UMcpAutomationBridgeSubsystem::HandleAssetQueryAction(
 
     // Extract subaction
     const FString SubAction = GetJsonStringField(Payload, TEXT("subAction"));
+
+    if (SubAction == TEXT("inspect_asset"))
+    {
+        return HandleInspectAsset(RequestId, Action, Payload, RequestingSocket);
+    }
 
     // -------------------------------------------------------------------------
     // get_dependencies: Get package dependencies for an asset
@@ -541,4 +548,65 @@ bool UMcpAutomationBridgeSubsystem::HandleSearchAssets(
 
     // Delegate to HandleAssetQueryAction
     return HandleAssetQueryAction(RequestId, TEXT("asset_query"), RoutedPayload, RequestingSocket);
+}
+
+bool UMcpAutomationBridgeSubsystem::HandleInspectAsset(
+    const FString& RequestId,
+    const FString& Action,
+    const TSharedPtr<FJsonObject>& Payload,
+    TSharedPtr<FMcpBridgeWebSocket> RequestingSocket)
+{
+    if (!Payload.IsValid())
+    {
+        SendAutomationError(RequestingSocket, RequestId,
+            TEXT("inspect_asset payload missing"), TEXT("INVALID_PAYLOAD"));
+        return true;
+    }
+
+    FString AssetPath;
+    if (!Payload->TryGetStringField(TEXT("assetPath"), AssetPath) || AssetPath.IsEmpty())
+    {
+        SendAutomationError(RequestingSocket, RequestId,
+            TEXT("assetPath is required"), TEXT("INVALID_ARGUMENT"));
+        return true;
+    }
+
+    const FString SanitizedAssetPath = SanitizeProjectRelativePath(AssetPath);
+    if (SanitizedAssetPath.IsEmpty())
+    {
+        SendAutomationError(RequestingSocket, RequestId,
+            FString::Printf(TEXT("Invalid assetPath: %s"), *AssetPath), TEXT("INVALID_PATH"));
+        return true;
+    }
+
+    McpAssetInspectionUtils::FInspectOptions Options;
+    Payload->TryGetNumberField(TEXT("depth"), Options.MaxDepth);
+    Payload->TryGetBoolField(TEXT("includeTransient"), Options.bIncludeTransient);
+    Payload->TryGetBoolField(TEXT("includeDefaults"), Options.bIncludeDefaults);
+    Payload->TryGetStringField(TEXT("propertyFilter"), Options.PropertyFilter);
+    Payload->TryGetStringField(TEXT("categoryFilter"), Options.CategoryFilter);
+    Options.MaxDepth = FMath::Clamp(Options.MaxDepth, 1, 8);
+
+    FString ResolvedPath;
+    FString ResolveError;
+    UObject* Asset = McpAssetInspectionUtils::ResolveAssetObject(
+        SanitizedAssetPath, ResolvedPath, ResolveError);
+    if (!Asset)
+    {
+        SendAutomationError(RequestingSocket, RequestId, ResolveError, TEXT("ASSET_NOT_FOUND"));
+        return true;
+    }
+
+    TSharedPtr<FJsonObject> Result = McpAssetInspectionUtils::BuildAssetInspectionJson(
+        Asset, ResolvedPath, Options);
+    if (!Result.IsValid())
+    {
+        SendAutomationError(RequestingSocket, RequestId,
+            TEXT("Failed to inspect asset"), TEXT("INSPECTION_FAILED"));
+        return true;
+    }
+
+    SendAutomationResponse(RequestingSocket, RequestId, true,
+        TEXT("Asset inspected."), Result);
+    return true;
 }
