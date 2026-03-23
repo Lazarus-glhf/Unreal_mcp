@@ -1839,6 +1839,12 @@ ExportPropertyToJsonValue(void *TargetContainer, FProperty *Property) {
           continue;
         }
 
+        if (TSharedPtr<FJsonValue> ExportedInner =
+                ExportPropertyToJsonValue(ElemPtr, Inner)) {
+          Out.Add(ExportedInner);
+          continue;
+        }
+
         // Fallback: Use ExportText_Direct for unsupported inner types
         FString ElemStr;
 #if ENGINE_MAJOR_VERSION == 5 && ENGINE_MINOR_VERSION >= 1
@@ -2470,9 +2476,15 @@ ApplyJsonValueToProperty(void *TargetContainer, FProperty *Property,
         continue;
       }
 
+      FString InnerError;
+      if (ApplyJsonValueToProperty(ElemPtr, Inner, V, InnerError)) {
+        continue;
+      }
+
       // Unsupported inner type -> fail explicitly
-      OutError =
-          TEXT("Unsupported array inner property type for JSON assignment");
+      OutError = FString::Printf(
+          TEXT("Unsupported array inner property type for JSON assignment: %s"),
+          *InnerError);
       return false;
     }
     return true;
@@ -2726,18 +2738,115 @@ static inline FProperty *ResolveNestedPropertyPath(UObject *RootObject,
   void *CurrentContainer = RootObject;
   FProperty *CurrentProperty = nullptr;
 
+  auto ParseSegment = [&OutError](const FString &InSegment,
+                                  FString &OutSegmentName,
+                                  bool &bOutHasIndex,
+                                  int32 &OutIndex) -> bool {
+    OutSegmentName = InSegment;
+    bOutHasIndex = false;
+    OutIndex = INDEX_NONE;
+
+    const int32 OpenBracket = InSegment.Find(TEXT("["));
+    if (OpenBracket == INDEX_NONE) {
+      return true;
+    }
+
+    const int32 CloseBracket = InSegment.Find(TEXT("]"), ESearchCase::CaseSensitive,
+                                              ESearchDir::FromStart, OpenBracket + 1);
+    if (CloseBracket == INDEX_NONE || CloseBracket != InSegment.Len() - 1 ||
+        OpenBracket <= 0) {
+      OutError = FString::Printf(TEXT("Invalid array property segment '%s'"),
+                                 *InSegment);
+      return false;
+    }
+
+    OutSegmentName = InSegment.Left(OpenBracket);
+    const FString IndexText = InSegment.Mid(OpenBracket + 1,
+                                            CloseBracket - OpenBracket - 1);
+    if (IndexText.IsEmpty() || !IndexText.IsNumeric()) {
+      OutError = FString::Printf(TEXT("Invalid array index in segment '%s'"),
+                                 *InSegment);
+      return false;
+    }
+
+    bOutHasIndex = true;
+    OutIndex = FCString::Atoi(*IndexText);
+    return true;
+  };
+
   for (int32 i = 0; i < PathSegments.Num(); ++i) {
     const FString &Segment = PathSegments[i];
     const bool bIsLastSegment = (i == PathSegments.Num() - 1);
 
+    FString SegmentName;
+    bool bHasArrayIndex = false;
+    int32 ArrayIndex = INDEX_NONE;
+    if (!ParseSegment(Segment, SegmentName, bHasArrayIndex, ArrayIndex)) {
+      return nullptr;
+    }
+
     // Find property in current scope
-    CurrentProperty =
-        FindFProperty<FProperty>(CurrentTypeScope, FName(*Segment));
+    CurrentProperty = FindFProperty<FProperty>(CurrentTypeScope, FName(*SegmentName));
 
     if (!CurrentProperty) {
       OutError = FString::Printf(
           TEXT("Property '%s' not found in scope '%s' (segment %d of %d)"),
-          *Segment, *CurrentTypeScope->GetName(), i + 1, PathSegments.Num());
+          *SegmentName, *CurrentTypeScope->GetName(), i + 1, PathSegments.Num());
+      return nullptr;
+    }
+
+    if (bHasArrayIndex) {
+      FArrayProperty *ArrayProp = CastField<FArrayProperty>(CurrentProperty);
+      if (!ArrayProp) {
+        OutError = FString::Printf(TEXT("Property '%s' is not an array"),
+                                   *SegmentName);
+        return nullptr;
+      }
+
+      FScriptArrayHelper Helper(
+          ArrayProp, ArrayProp->ContainerPtrToValuePtr<void>(CurrentContainer));
+      if (!Helper.IsValidIndex(ArrayIndex)) {
+        OutError = FString::Printf(
+            TEXT("Array index %d out of range for property '%s' (size %d)"),
+            ArrayIndex, *SegmentName, Helper.Num());
+        return nullptr;
+      }
+
+      void *ElementPtr = Helper.GetRawPtr(ArrayIndex);
+      FProperty *InnerProperty = ArrayProp->Inner;
+      if (!InnerProperty || !ElementPtr) {
+        OutError = FString::Printf(TEXT("Failed to access array element %d on '%s'"),
+                                   ArrayIndex, *SegmentName);
+        return nullptr;
+      }
+
+      if (bIsLastSegment) {
+        OutContainerPtr = ElementPtr;
+        return InnerProperty;
+      }
+
+      if (FObjectProperty *InnerObjectProp = CastField<FObjectProperty>(InnerProperty)) {
+        UObject *NextObject = InnerObjectProp->GetObjectPropertyValue(ElementPtr);
+        if (!NextObject) {
+          OutError = FString::Printf(
+              TEXT("Array element '%s[%d]' is null (segment %d of %d)"),
+              *SegmentName, ArrayIndex, i + 1, PathSegments.Num());
+          return nullptr;
+        }
+        CurrentContainer = NextObject;
+        CurrentTypeScope = NextObject->GetClass();
+        continue;
+      }
+
+      if (FStructProperty *InnerStructProp = CastField<FStructProperty>(InnerProperty)) {
+        CurrentContainer = ElementPtr;
+        CurrentTypeScope = InnerStructProp->Struct;
+        continue;
+      }
+
+      OutError = FString::Printf(
+          TEXT("Cannot traverse into array element '%s[%d]' of type '%s'"),
+          *SegmentName, ArrayIndex, *InnerProperty->GetClass()->GetName());
       return nullptr;
     }
 
@@ -2754,7 +2863,7 @@ static inline FProperty *ResolveNestedPropertyPath(UObject *RootObject,
           ObjectProp->GetObjectPropertyValue_InContainer(CurrentContainer);
       if (!NextObject) {
         OutError = FString::Printf(
-            TEXT("Object property '%s' is null (segment %d of %d)"), *Segment,
+            TEXT("Object property '%s' is null (segment %d of %d)"), *SegmentName,
             i + 1, PathSegments.Num());
         return nullptr;
       }
@@ -2767,7 +2876,7 @@ static inline FProperty *ResolveNestedPropertyPath(UObject *RootObject,
       CurrentTypeScope = StructProp->Struct;
     } else {
       OutError = FString::Printf(
-          TEXT("Cannot traverse into property '%s' of type '%s'"), *Segment,
+          TEXT("Cannot traverse into property '%s' of type '%s'"), *SegmentName,
           *CurrentProperty->GetClass()->GetName());
       return nullptr;
     }

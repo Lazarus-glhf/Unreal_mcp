@@ -74,6 +74,10 @@ export interface IAssetTools {
     generateReport(params: { directory: string; reportType?: string; outputPath?: string }): Promise<StandardActionResponse>;
     validate(params: { assetPath: string }): Promise<StandardActionResponse>;
     generateLODs(params: { assetPath: string; lodCount: number; reductionSettings?: Record<string, unknown> }): Promise<StandardActionResponse>;
+    inspectAssetProperties(params: { assetPath: string; depth?: number; includeTransient?: boolean; includeDefaults?: boolean; propertyFilter?: string; categoryFilter?: string }): Promise<StandardActionResponse>;
+    getAssetProperty(params: { assetPath: string; propertyPath: string }): Promise<StandardActionResponse>;
+    setAssetProperty(params: { assetPath: string; propertyPath: string; value: unknown; save?: boolean }): Promise<StandardActionResponse>;
+    resolveReference(params: { referencePath: string }): Promise<StandardActionResponse>;
 }
 
 export interface ISequenceTools {

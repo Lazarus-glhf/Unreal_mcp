@@ -195,6 +195,94 @@ export class AssetTools extends BaseTool implements IAssetTools {
     }
   }
 
+  async inspectAssetProperties(params: { assetPath: string; depth?: number; includeTransient?: boolean; includeDefaults?: boolean; propertyFilter?: string; categoryFilter?: string }): Promise<StandardActionResponse> {
+    const assetPath = this.normalizeAssetPath(params.assetPath);
+    return this.sendRequest<AssetResponse>('inspect_asset', {
+      assetPath,
+      depth: params.depth,
+      includeTransient: params.includeTransient,
+      includeDefaults: params.includeDefaults,
+      propertyFilter: params.propertyFilter,
+      categoryFilter: params.categoryFilter
+    }, 'inspect_asset', { timeoutMs: DEFAULT_ASSET_OP_TIMEOUT_MS });
+  }
+
+  async getAssetProperty(params: { assetPath: string; propertyPath: string }): Promise<StandardActionResponse> {
+    const assetPath = this.normalizeAssetPath(params.assetPath);
+    return this.sendRequest<AssetResponse>('inspect', {
+      action: 'get_property',
+      objectPath: assetPath,
+      propertyName: params.propertyPath,
+      propertyPath: params.propertyPath
+    }, 'inspect', { timeoutMs: DEFAULT_ASSET_OP_TIMEOUT_MS });
+  }
+
+  async setAssetProperty(params: { assetPath: string; propertyPath: string; value: unknown; save?: boolean }): Promise<StandardActionResponse> {
+    if (!Object.prototype.hasOwnProperty.call(params, 'value')) {
+      throw new Error('setAssetProperty requires a value');
+    }
+
+    const assetPath = this.normalizeAssetPath(params.assetPath);
+    const updateResponse = await this.sendRequest<AssetResponse>('inspect', {
+      action: 'set_property',
+      objectPath: assetPath,
+      propertyName: params.propertyPath,
+      propertyPath: params.propertyPath,
+      value: params.value
+    }, 'inspect', { timeoutMs: DEFAULT_ASSET_OP_TIMEOUT_MS });
+
+    if (!updateResponse?.success) {
+      return updateResponse;
+    }
+
+    if (params.save === false) {
+      return updateResponse;
+    }
+
+    const saveResponse = await this.saveAsset(assetPath);
+    if (!saveResponse.success) {
+      return {
+        success: false,
+        error: saveResponse.error ?? 'Property updated but asset save failed',
+        update: updateResponse,
+        save: saveResponse
+      };
+    }
+
+    return {
+      ...updateResponse,
+      saved: true,
+      save: saveResponse
+    };
+  }
+
+  async resolveReference(params: { referencePath: string }): Promise<StandardActionResponse> {
+    const referencePath = String(params.referencePath ?? '').trim();
+
+    const response = await this.sendAutomationRequest<Record<string, unknown>>('inspect', {
+      action: 'inspect_object',
+      objectPath: referencePath
+    }, { timeoutMs: DEFAULT_ASSET_OP_TIMEOUT_MS });
+
+    const result = (response?.result && typeof response.result === 'object')
+      ? response.result as Record<string, unknown>
+      : undefined;
+    const detailsObj = result ?? response ?? {};
+    const success = response?.success !== false && detailsObj.success !== false;
+
+    return {
+      ...detailsObj,
+      success,
+      exists: success,
+      referencePath,
+      message: typeof detailsObj.message === 'string'
+        ? detailsObj.message
+        : success
+          ? 'Reference resolved'
+          : 'Reference not found'
+    };
+  }
+
   async createFolder(folderPath: string): Promise<StandardActionResponse> {
     // Folders are paths too
     const path = this.normalizeAssetPath(folderPath);

@@ -72,6 +72,7 @@ export const consolidatedToolDefinitions: ToolDefinition[] = [
           enum: [
             'list', 'import', 'duplicate', 'duplicate_asset', 'rename', 'rename_asset', 'move', 'move_asset', 'delete', 'delete_asset', 'delete_assets', 'create_folder', 'search_assets',
             'get_dependencies', 'get_source_control_state', 'analyze_graph', 'get_asset_graph', 'create_thumbnail', 'set_tags', 'get_metadata', 'set_metadata', 'validate', 'fixup_redirectors', 'find_by_tag', 'generate_report',
+            'save_asset', 'inspect_asset_properties', 'get_asset_property', 'set_asset_property', 'resolve_reference',
             'create_material', 'create_material_instance', 'create_render_target', 'generate_lods', 'add_material_parameter', 'list_instances', 'reset_instance_parameters', 'exists', 'get_material_stats',
             'nanite_rebuild_mesh', 'bulk_rename', 'bulk_delete', 'source_control_checkout', 'source_control_submit',
             'add_material_node', 'connect_material_pins', 'remove_material_node', 'break_material_connections', 'get_material_node_details', 'rebuild_material'
@@ -79,6 +80,7 @@ export const consolidatedToolDefinitions: ToolDefinition[] = [
           description: 'Action to perform'
         },
         assetPath: commonSchemas.assetPath,
+        referencePath: commonSchemas.stringProp,
         directory: commonSchemas.directoryPath,
         classNames: commonSchemas.arrayOfStrings,
         packagePaths: commonSchemas.arrayOfStrings,
@@ -121,6 +123,7 @@ export const consolidatedToolDefinitions: ToolDefinition[] = [
         toNodeId: commonSchemas.targetNodeId,
         toPin: commonSchemas.targetPin,
         parameterName: commonSchemas.parameterName,
+        propertyPath: commonSchemas.stringProp,
         value: commonSchemas.value,
         x: commonSchemas.numberProp,
         y: commonSchemas.numberProp,
@@ -128,6 +131,11 @@ export const consolidatedToolDefinitions: ToolDefinition[] = [
         parentNodeId: commonSchemas.nodeId,
         childNodeId: commonSchemas.nodeId,
         maxDepth: commonSchemas.numberProp,
+        depth: commonSchemas.numberProp,
+        includeTransient: commonSchemas.booleanProp,
+        includeDefaults: commonSchemas.booleanProp,
+        propertyFilter: commonSchemas.stringProp,
+        categoryFilter: commonSchemas.stringProp,
         // Bulk operations (C++ TryGetStringField)
         prefix: commonSchemas.stringProp,
         suffix: commonSchemas.stringProp,

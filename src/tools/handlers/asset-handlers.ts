@@ -16,6 +16,7 @@ const VALID_ASSET_ACTIONS = new Set([
   'create_folder', 'search_assets', 'get_dependencies', 'validate',
   'fixup_redirectors', 'find_by_tag', 'exists', 'bulk_rename', 'bulk_delete',
   'duplicate_asset', 'rename_asset', 'move_asset', 'delete_asset', 'delete_assets',
+  'save_asset', 'inspect_asset_properties', 'get_asset_property', 'set_asset_property', 'resolve_reference',
   // Asset metadata
   'create_thumbnail', 'set_tags', 'get_metadata', 'set_metadata', 'generate_report',
   // Material operations
@@ -745,6 +746,135 @@ export async function handleAssetTools(action: string, args: HandlerArgs, tools:
           assetPath
         });
         return ResponseFactory.success(res, 'Asset existence check complete');
+      }
+      case 'save_asset': {
+        const params = normalizeArgs(args, [
+          { key: 'assetPath', required: true }
+        ]);
+        const assetPath = extractString(params, 'assetPath');
+        const res = await executeAutomationRequest(tools, 'save_asset', {
+          assetPath
+        }) as AssetOperationResponse;
+
+        if (res && res.success === false) {
+          return cleanObject(res as Record<string, unknown>);
+        }
+
+        return ResponseFactory.success(res, 'Asset saved successfully');
+      }
+      case 'inspect_asset_properties': {
+        const params = normalizeArgs(args, [
+          { key: 'assetPath', required: true },
+          { key: 'depth' },
+          { key: 'includeTransient' },
+          { key: 'includeDefaults' },
+          { key: 'propertyFilter' },
+          { key: 'categoryFilter' }
+        ]);
+        const assetPath = extractString(params, 'assetPath');
+        const depth = extractOptionalNumber(params, 'depth');
+        const includeTransient = extractOptionalBoolean(params, 'includeTransient');
+        const includeDefaults = extractOptionalBoolean(params, 'includeDefaults');
+        const propertyFilter = extractOptionalString(params, 'propertyFilter');
+        const categoryFilter = extractOptionalString(params, 'categoryFilter');
+        const res = await executeAutomationRequest(tools, 'inspect_asset', {
+          assetPath,
+          depth,
+          includeTransient,
+          includeDefaults,
+          propertyFilter,
+          categoryFilter
+        });
+        return cleanObject(res as Record<string, unknown>);
+      }
+      case 'get_asset_property': {
+        const params = normalizeArgs(args, [
+          { key: 'assetPath', required: true },
+          { key: 'propertyPath', aliases: ['propertyName'], required: true }
+        ]);
+        const assetPath = extractString(params, 'assetPath');
+        const propertyPath = extractString(params, 'propertyPath');
+        const res = await executeAutomationRequest(tools, 'inspect', {
+          action: 'get_property',
+          objectPath: assetPath,
+          propertyName: propertyPath
+        });
+        return cleanObject({
+          ...(res as Record<string, unknown>),
+          assetPath,
+          propertyPath
+        });
+      }
+      case 'set_asset_property': {
+        const params = normalizeArgs(args, [
+          { key: 'assetPath', required: true },
+          { key: 'propertyPath', aliases: ['propertyName'], required: true },
+          { key: 'value', required: true },
+          { key: 'save', default: true }
+        ]);
+        const assetPath = extractString(params, 'assetPath');
+        const propertyPath = extractString(params, 'propertyPath');
+        const value = params.value;
+        const save = extractOptionalBoolean(params, 'save') ?? true;
+
+        const updateRes = await executeAutomationRequest(tools, 'inspect', {
+          action: 'set_property',
+          objectPath: assetPath,
+          propertyName: propertyPath,
+          value
+        }) as AssetOperationResponse;
+
+        if (updateRes && updateRes.success === false) {
+          return cleanObject({
+            ...updateRes,
+            assetPath,
+            propertyPath
+          });
+        }
+
+        let saveRes: Record<string, unknown> | undefined;
+        if (save) {
+          saveRes = await executeAutomationRequest(tools, 'save_asset', {
+            assetPath
+          }) as Record<string, unknown>;
+
+          if (saveRes && saveRes.success === false) {
+            return cleanObject({
+              success: false,
+              error: saveRes.error ?? 'SAVE_FAILED',
+              message: saveRes.message ?? 'Property updated but failed to save asset',
+              assetPath,
+              propertyPath,
+              update: updateRes,
+              save: saveRes
+            });
+          }
+        }
+
+        return cleanObject({
+          ...(updateRes || {}),
+          assetPath,
+          propertyPath,
+          saved: save,
+          save: saveRes
+        });
+      }
+      case 'resolve_reference': {
+        const params = normalizeArgs(args, [
+          { key: 'referencePath', aliases: ['assetPath', 'path'], required: true }
+        ]);
+        const referencePath = extractString(params, 'referencePath');
+        const inspectRes = await executeAutomationRequest(tools, 'inspect', {
+          action: 'inspect_object',
+          objectPath: referencePath
+        }) as Record<string, unknown>;
+
+        return cleanObject({
+          ...(inspectRes || {}),
+          success: inspectRes?.success !== false,
+          exists: inspectRes?.success !== false,
+          referencePath
+        });
       }
       case 'get_material_stats': {
         const params = normalizeArgs(args, [
